@@ -1,6 +1,13 @@
 [
   {
     "title": "New List",
-    "items": []
+    "items": [
+      {
+        "Item": "",
+        "web": "",
+        "price": "",
+        "P.S.": ""
+      }
+    ]
   }
 ]
