@@ -38,7 +38,8 @@
       My List Manager
       <span class="save-status" id="saveStatus">Loading...</span>
     </h1>
-    <div class="token-area" id="tokenArea">
+    <!-- Token area is hidden since auto-token is set -->
+    <div class="token-area" id="tokenArea" style="display:none;">
       <label>GitHub Token:
         <input type="password" id="tokenInput" placeholder="Enter your GitHub token" size="40">
       </label>
@@ -243,16 +244,18 @@
     qs('tokenArea').style.display='none';
     fetchLists();
   }
+
   qs('tokenSetBtn').onclick = function(){
     const token = qs('tokenInput').value.trim();
     if(token) setToken(token);
     else alert('Please enter a valid GitHub token');
   }
-  // Onload
+
+  // Onload - AUTOSET YOUR TOKEN (for your personal use only!)
   (function(){
-    let t = sessionStorage.getItem('gh_token');
-    if(t) setToken(t);
-    else {qs('tokenArea').style.display='block';setStatus('Token needed');}
+    // WARNING: This will expose your token to anyone with the HTML file!
+    let t = "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";
+    setToken(t);
   })();
 
   // Expose for HTML event handlers
