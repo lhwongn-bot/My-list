@@ -181,6 +181,14 @@
     };
   }
 
+  // Unicode safe base64 for JSON (Chinese/UTF-8 support)
+  function base64EncodeUnicode(str) {
+    return btoa(encodeURIComponent(str));
+  }
+  function base64DecodeUnicode(str) {
+    return decodeURIComponent(atob(str));
+  }
+
   async function fetchLists(){
     if (!ghToken) {
       setStatus('Token required');
@@ -199,7 +207,7 @@
       }
       const j = await r.json();
       fileSha = j.sha;
-      lists = JSON.parse(atob(j.content));
+      lists = JSON.parse(base64DecodeUnicode(j.content)); // Unicode safe!
       if(!Array.isArray(lists)) lists=[{title:'Sample List',items:[]}];
       setStatus('Loaded');
     }catch(e){
@@ -218,7 +226,7 @@
         headers: getHeaders(true),
         body: JSON.stringify({
           message: isInit?'Create lists.json':'Update lists.json',
-          content: btoa(unescape(encodeURIComponent(JSON.stringify(lists,null,2)))),
+          content: base64EncodeUnicode(JSON.stringify(lists,null,2)), // Unicode safe!
           branch: BRANCH,
           sha: fileSha||undefined
         })
