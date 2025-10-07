@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>My List Manager</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    body { font-family: sans-serif; background: #f6f8fa; color: #222; margin: 0; padding: 0; }
+    #app { max-width: 900px; margin: 32px auto; background: #fff; border-radius: 8px; box-shadow: 0 2px 8px #0001; padding: 32px;}
+    h1 { margin-top: 0; }
+    .list-tabs {margin-bottom:16px;}
+    .list-tab {margin-right:6px; padding:4px 10px; border-radius:6px; border:none; background:#e3e6ea; cursor:pointer;}
+    .list-tab.active {background:#0366d6; color:#fff;}
+    .list-tab .del-list {margin-left:5px; color:#a00; cursor:pointer;}
+    .list-title {font-size:1.3em; font-weight:bold;padding:6px 0;margin-bottom:8px;width:100%;border:1px solid #ddd; border-radius:4px;}
+    table {width:100%;border-collapse:collapse;margin-bottom:8px;}
+    th, td {border:1px solid #ddd;padding:6px;}
+    th {background:#f1f5fa;}
+    tr.dragging {background: #f3f3f3;}
+    tr:hover:not(.dragging) {background:#f9fafc;}
+    .actions {text-align:right;}
+    .item-del {color:#b00; background:none; border:none; cursor:pointer;}
+    .item-move {cursor:grab;}
+    .token-area {margin-bottom:14px;}
+    .save-status {float:right; font-size:0.95em; color:#888;}
+    .add-row-btn, .add-list-btn {margin-top:8px;}
+    input[type="text"] {width:98%; box-sizing:border-box;}
+    @media (max-width:600px) {
+      #app {padding:8px;}
+      table, th, td {font-size:13px;}
+      .list-title {font-size:1em;}
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <h1>
+      My List Manager
+      <span class="save-status" id="saveStatus">Loading...</span>
+    </h1>
+    <div class="token-area" id="tokenArea">
+      <label>GitHub Token:
+        <input type="password" id="tokenInput" placeholder="Enter your GitHub token" size="40">
+      </label>
+      <button id="tokenSetBtn">Set</button>
+      <span id="tokenInfo" style="color:#888;font-size:0.95em"></span>
+    </div>
+    <div>
+      <div class="list-tabs" id="listTabs"></div>
+      <button class="add-list-btn" id="addListBtn">+ Add List</button>
+    </div>
+    <div id="listArea" style="display:none;">
+      <input class="list-title" id="listTitle">
+      <table id="itemTable">
+        <thead>
+          <tr>
+            <th style="width:22%;">Item</th>
+            <th style="width:33%;">web</th>
+            <th style="width:12%;">price</th>
+            <th style="width:23%;">P.S.</th>
+            <th style="width:10%;">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="itemRows"></tbody>
+      </table>
+      <button class="add-row-btn" id="addItemBtn">+ Add Item</button>
+    </div>
+  </div>
+
+  <script>
+  // --- CONFIG ---
+  const OWNER = 'lhwongn-bot';
+  const REPO = 'My-list';
+  const BRANCH = 'main';
+  const FILE = 'lists.json';
+
+  // --- STATE ---
+  let ghToken = '';
+  let lists = []; // [{title,items:[{Item,web,price,P.S.}]}]
+  let currentList = 0;
+  let fileSha = null;
+  let saveTimer = null;
+
+  // --- UI HANDLERS ---
+  function qs(id){return document.getElementById(id);}
+  function setStatus(txt){ qs('saveStatus').innerText = txt;}
+  function escapeHtml(str){return (str+'').replace(/[&<>"']/g,s=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[s]));}
+
+  function renderTabs(){
+    const tabs = lists.map((l,idx) =>
+      `<button class="list-tab${idx===currentList?' active':''}" onclick="showList(${idx})">
+        ${escapeHtml(l.title||'Untitled')}
+        <span class="del-list" onclick="event.stopPropagation();deleteList(${idx})">&times;</span>
+      </button>`
+    ).join('');
+    qs('listTabs').innerHTML = tabs;
+  }
+
+  function renderList(){
+    if(!lists[currentList]){qs('listArea').style.display='none';return;}
+    qs('listArea').style.display='block';
+    qs('listTitle').value = lists[currentList].title||'';
+    renderRows();
+  }
+
+  function renderRows(){
+    const items = lists[currentList].items;
+    qs('itemRows').innerHTML = items.map((it,idx)=>`
+      <tr draggable="true" ondragstart="startDrag(${idx})" ondragover="dragOver(event,${idx})" ondrop="dropDrag(${idx})" ondragend="endDrag()">
+        <td><input type="text" value="${escapeHtml(it.Item)}" onchange="editItem(${idx},'Item',this.value)"></td>
+        <td><input type="text" value="${escapeHtml(it.web)}" onchange="editItem(${idx},'web',this.value)"></td>
+        <td><input type="text" value="${escapeHtml(it.price)}" onchange="editItem(${idx},'price',this.value)"></td>
+        <td><input type="text" value="${escapeHtml(it['P.S.'])}" onchange="editItem(${idx},'P.S.',this.value)"></td>
+        <td class="actions">
+          <button class="item-del" onclick="deleteItem(${idx})">&times;</button>
+          <span class="item-move" title="Drag">&#x2630;</span>
+        </td>
+      </tr>`).join('');
+  }
+
+  // --- LIST LOGIC ---
+  window.showList = function(idx){
+    saveIfDirty();
+    currentList=idx;
+    renderTabs();renderList();
+  }
+  window.deleteList = function(idx){
+    if(!confirm('Delete this list?'))return;
+    lists.splice(idx,1);
+    if(currentList>=lists.length)currentList=lists.length-1;
+    renderTabs();renderList(); queueSave();
+  }
+  qs('addListBtn').onclick = function(){
+    saveIfDirty();
+    lists.push({title:'New List',items:[]});
+    currentList=lists.length-1;
+    renderTabs();renderList(); queueSave();
+  }
+  qs('listTitle').onchange = function(){
+    lists[currentList].title=this.value; queueSave();
+    renderTabs();
+  }
+
+  // --- ITEM LOGIC ---
+  window.editItem = function(idx,col,val){
+    lists[currentList].items[idx][col]=val; queueSave();
+  }
+  window.deleteItem = function(idx){
+    lists[currentList].items.splice(idx,1); renderRows(); queueSave();
+  }
+  qs('addItemBtn').onclick = function(){
+    lists[currentList].items.push({Item:'',web:'',price:'',"P.S.":''});
+    renderRows(); queueSave();
+  }
+
+  // --- DRAG & DROP ---
+  let dragIdx = null;
+  window.startDrag = function(idx){dragIdx=idx; event.currentTarget.classList.add('dragging');}
+  window.dragOver = function(e,idx){e.preventDefault();}
+  window.dropDrag = function(idx){
+    if(dragIdx===null)return;
+    const arr=lists[currentList].items;
+    const [moved]=arr.splice(dragIdx,1);
+    arr.splice(idx,0,moved);
+    renderRows(); queueSave();
+    dragIdx=null;
+  }
+  window.endDrag = function(){[].forEach.call(document.querySelectorAll('tr'),tr=>tr.classList.remove('dragging'));}
+
+  // --- GITHUB API ---
+  function getHeaders(isPut){
+    return {
+      'Authorization': 'token '+ghToken,
+      'Accept': 'application/vnd.github+json',
+      ...(isPut ? {'Content-Type':'application/json'} : {})
+    };
+  }
+
+  async function fetchLists(){
+    setStatus('Loading...');
+    try{
+      const r = await fetch(`https://api.github.com/repos/${OWNER}/${REPO}/contents/${FILE}?ref=${BRANCH}`,{
+        headers: getHeaders()
+      });
+      if(r.status===404){
+        // File doesn't exist yet; start empty
+        lists=[{title:'Sample List',items:[]}]; fileSha=null;
+        setStatus('New file'); saveLists(true); // Save initial file
+        return;
+      }
+      const j = await r.json();
+      fileSha = j.sha;
+      lists = JSON.parse(atob(j.content));
+      if(!Array.isArray(lists)) lists=[{title:'Sample List',items:[]}];
+      setStatus('Loaded');
+    }catch(e){
+      setStatus('Failed to load lists');
+      alert('Error loading lists: '+e);
+      lists=[{title:'Sample List',items:[]}];
+    }
+    renderTabs(); renderList();
+  }
+
+  async function saveLists(isInit){
+    setStatus('Saving...');
+    try{
+      const res = await fetch(`https://api.github.com/repos/${OWNER}/${REPO}/contents/${FILE}`,{
+        method:'PUT',
+        headers: getHeaders(true),
+        body: JSON.stringify({
+          message: isInit?'Create lists.json':'Update lists.json',
+          content: btoa(unescape(encodeURIComponent(JSON.stringify(lists,null,2)))),
+          branch: BRANCH,
+          sha: fileSha||undefined
+        })
+      });
+      const resp = await res.json();
+      if(resp && resp.content && resp.content.sha){
+        fileSha=resp.content.sha;
+        setStatus('Saved');
+      }else{
+        throw new Error(resp.message||'Unknown error');
+      }
+    }catch(e){
+      setStatus('Save failed');
+      alert('Failed to save: '+e);
+    }
+  }
+
+  function queueSave(){
+    setStatus('Saving...');
+    if(saveTimer)clearTimeout(saveTimer);
+    saveTimer = setTimeout(()=>saveLists(false), 900);
+  }
+  function saveIfDirty(){
+    if(saveTimer) { clearTimeout(saveTimer); saveLists(false);}
+  }
+
+  // --- TOKEN LOGIC ---
+  function setToken(token){
+    ghToken = token;
+    sessionStorage.setItem('gh_token', token);
+    qs('tokenArea').style.display='none';
+    fetchLists();
+  }
+  qs('tokenSetBtn').onclick = function(){
+    const token = qs('tokenInput').value.trim();
+    if(token) setToken(token);
+    else alert('Please enter a valid GitHub token');
+  }
+  // Onload
+  (function(){
+    let t = sessionStorage.getItem('gh_token');
+    if(t) setToken(t);
+    else {qs('tokenArea').style.display='block';setStatus('Token needed');}
+  })();
+
+  // Expose for HTML event handlers
+  window.showList = window.showList;
+  window.deleteList = window.deleteList;
+  window.editItem = window.editItem;
+  window.deleteItem = window.deleteItem;
+  window.startDrag = window.startDrag;
+  window.dragOver = window.dragOver;
+  window.dropDrag = window.dropDrag;
+  window.endDrag = window.endDrag;
+  </script>
+</body>
+</html>
