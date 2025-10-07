@@ -8,6 +8,13 @@
     body { font-family: sans-serif; background: #f6f8fa; color: #222; margin: 0; padding: 0; }
     #app { max-width: 900px; margin: 32px auto; background: #fff; border-radius: 8px; box-shadow: 0 2px 8px #0001; padding: 32px;}
     h1 { margin-top: 0; }
+    .top-bar { display: flex; align-items: center; margin-bottom: 14px; }
+    .grok-btn {
+      display:inline-block; margin-right:16px; padding:6px 18px; border-radius:6px;
+      background: #222; color: #fff; text-decoration: none; font-weight: bold; font-size: 1em; border: none; cursor: pointer;
+      transition: background 0.15s;
+    }
+    .grok-btn:hover { background: #0366d6; color:#fff; }
     .list-tabs {margin-bottom:16px;}
     .list-tab {margin-right:6px; padding:4px 10px; border-radius:6px; border:none; background:#e3e6ea; cursor:pointer;}
     .list-tab.active {background:#0366d6; color:#fff;}
@@ -31,23 +38,28 @@
       #app {padding:8px;}
       table, th, td {font-size:13px;}
       .list-title {font-size:1em;}
+      .top-bar { flex-direction: column; align-items: flex-start;}
+      .grok-btn { margin-bottom: 8px; }
     }
   </style>
 </head>
 <body>
   <div id="app">
-    <h1>
-      My List Manager
-      <span class="save-status" id="saveStatus">Loading...</span>
-    </h1>
+    <div class="top-bar">
+      <a class="grok-btn" href="https://grok.com/" target="_blank">Go to Grok</a>
+      <h1 style="margin:0;flex:1 0 auto;">
+        My List Manager
+        <span class="save-status" id="saveStatus">Loading...</span>
+      </h1>
+    </div>
     <div class="token-area" id="tokenArea">
       <label>GitHub Token:
         <input type="password" id="tokenInput" placeholder="Enter your GitHub token" size="40">
       </label>
       <button id="tokenSetBtn">Set</button>
       <button id="tokenCheckBtn">Check Token</button>
-      <label id="rememberLabel">
-        <input type="checkbox" id="rememberToken"> Remember
+      <label id="rememberLabel" style="display:none;">
+        <input type="checkbox" id="rememberToken" checked> Remember
       </label>
       <span id="tokenInfo" style="color:#888;font-size:0.95em"></span>
     </div>
@@ -254,34 +266,27 @@
   }
 
   // --- TOKEN LOGIC ---
-  function setToken(token, remember){
+  function setToken(token) {
     ghToken = token;
-    if (remember) {
-      localStorage.setItem('gh_token', token);
-      sessionStorage.removeItem('gh_token');
-    } else {
-      sessionStorage.setItem('gh_token', token);
-      localStorage.removeItem('gh_token');
-    }
+    localStorage.setItem('gh_token', token);
+    sessionStorage.removeItem('gh_token');
     qs('tokenArea').style.display = '';
     fetchLists();
   }
 
-  // Load token if saved
+  // Load token if saved (ALWAYS remember on set, so always use localStorage)
   (function loadSavedToken(){
     let stored = localStorage.getItem('gh_token') || sessionStorage.getItem('gh_token');
     if(stored){
       qs('tokenInput').value = stored;
       ghToken = stored;
-      qs('rememberToken').checked = !!localStorage.getItem('gh_token');
       fetchLists();
     }
   })();
 
   qs('tokenSetBtn').onclick = function(){
     const token = qs('tokenInput').value.trim();
-    const remember = qs('rememberToken').checked;
-    if(token) setToken(token, remember);
+    if(token) setToken(token);
     else alert('Please enter a valid GitHub token');
   };
 
@@ -310,12 +315,6 @@
       qs('tokenInfo').innerText = "Network error";
     }
   };
-
-  // Onload: Remove auto-set token for security
-  // (function(){
-  //   let t = "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";
-  //   setToken(t);
-  // })();
 
   // Expose for HTML event handlers
   window.showList = window.showList;
