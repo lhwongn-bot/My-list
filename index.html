@@ -25,6 +25,8 @@
     .save-status {float:right; font-size:0.95em; color:#888;}
     .add-row-btn, .add-list-btn {margin-top:8px;}
     input[type="text"] {width:98%; box-sizing:border-box;}
+    #tokenCheckBtn {margin-left:8px;}
+    #rememberToken {margin-left:8px;}
     @media (max-width:600px) {
       #app {padding:8px;}
       table, th, td {font-size:13px;}
@@ -38,12 +40,15 @@
       My List Manager
       <span class="save-status" id="saveStatus">Loading...</span>
     </h1>
-    <!-- Token area is hidden since auto-token is set -->
-    <div class="token-area" id="tokenArea" style="display:none;">
+    <div class="token-area" id="tokenArea">
       <label>GitHub Token:
         <input type="password" id="tokenInput" placeholder="Enter your GitHub token" size="40">
       </label>
       <button id="tokenSetBtn">Set</button>
+      <button id="tokenCheckBtn">Check Token</button>
+      <label id="rememberLabel">
+        <input type="checkbox" id="rememberToken"> Remember
+      </label>
       <span id="tokenInfo" style="color:#888;font-size:0.95em"></span>
     </div>
     <div>
@@ -67,7 +72,6 @@
       <button class="add-row-btn" id="addItemBtn">+ Add Item</button>
     </div>
   </div>
-
   <script>
   // --- CONFIG ---
   const OWNER = 'lhwongn-bot';
@@ -178,6 +182,10 @@
   }
 
   async function fetchLists(){
+    if (!ghToken) {
+      setStatus('Token required');
+      return;
+    }
     setStatus('Loading...');
     try{
       const r = await fetch(`https://api.github.com/repos/${OWNER}/${REPO}/contents/${FILE}?ref=${BRANCH}`,{
@@ -238,25 +246,68 @@
   }
 
   // --- TOKEN LOGIC ---
-  function setToken(token){
+  function setToken(token, remember){
     ghToken = token;
-    sessionStorage.setItem('gh_token', token);
-    qs('tokenArea').style.display='none';
+    if (remember) {
+      localStorage.setItem('gh_token', token);
+      sessionStorage.removeItem('gh_token');
+    } else {
+      sessionStorage.setItem('gh_token', token);
+      localStorage.removeItem('gh_token');
+    }
+    qs('tokenArea').style.display = '';
     fetchLists();
   }
 
+  // Load token if saved
+  (function loadSavedToken(){
+    let stored = localStorage.getItem('gh_token') || sessionStorage.getItem('gh_token');
+    if(stored){
+      qs('tokenInput').value = stored;
+      ghToken = stored;
+      qs('rememberToken').checked = !!localStorage.getItem('gh_token');
+      fetchLists();
+    }
+  })();
+
   qs('tokenSetBtn').onclick = function(){
     const token = qs('tokenInput').value.trim();
-    if(token) setToken(token);
+    const remember = qs('rememberToken').checked;
+    if(token) setToken(token, remember);
     else alert('Please enter a valid GitHub token');
-  }
+  };
 
-  // Onload - AUTOSET YOUR TOKEN (for your personal use only!)
-  (function(){
-    // WARNING: This will expose your token to anyone with the HTML file!
-    let t = "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";
-    setToken(t);
-  })();
+  // --- Token Check Function ---
+  qs('tokenCheckBtn').onclick = async function(){
+    const token = qs('tokenInput').value.trim();
+    if (!token) {
+      qs('tokenInfo').innerText = "Please enter a token first.";
+      return;
+    }
+    qs('tokenInfo').innerText = "Checking token...";
+    try {
+      const resp = await fetch('https://api.github.com/user', {
+        headers: {
+          'Authorization': 'token ' + token,
+          'Accept': 'application/vnd.github+json'
+        }
+      });
+      if (resp.ok) {
+        const user = await resp.json();
+        qs('tokenInfo').innerText = "Valid token: " + user.login;
+      } else {
+        qs('tokenInfo').innerText = "Invalid token or insufficient permissions";
+      }
+    } catch (e) {
+      qs('tokenInfo').innerText = "Network error";
+    }
+  };
+
+  // Onload: Remove auto-set token for security
+  // (function(){
+  //   let t = "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";
+  //   setToken(t);
+  // })();
 
   // Expose for HTML event handlers
   window.showList = window.showList;
