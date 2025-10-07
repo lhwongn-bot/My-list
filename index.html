@@ -34,12 +34,32 @@
     input[type="text"] {width:98%; box-sizing:border-box;}
     #tokenCheckBtn {margin-left:8px;}
     #rememberToken {margin-left:8px;}
+    .item-img-preview {width:38px; height:38px; object-fit:cover; border-radius:4px; border:1px solid #ddd; margin-right:4px; cursor:pointer;}
+    .img-upload-wrap {display:flex; align-items:center;}
+    .img-upload-label { cursor: pointer; color: #0366d6; margin-left: 4px;}
+    .img-upload-progress { margin-left: 6px; font-size:0.95em; color: #888;}
+    /* Modal Styles */
+    .modal-bg {
+      display:none; position:fixed; left:0; top:0; width:100vw; height:100vh; background:rgba(0,0,0,0.66); z-index:1001; align-items:center; justify-content:center;
+    }
+    .modal-bg.active {display:flex;}
+    .modal-img-wrap {
+      background: #fff; border-radius: 8px; box-shadow: 0 2px 16px #0008; max-width:90vw; max-height:90vh; padding:10px; position:relative;
+      display: flex; flex-direction: column; align-items: center;
+    }
+    .modal-img {max-width:80vw; max-height:75vh; border-radius:6px;}
+    .modal-close-btn {
+      position: absolute; top: 8px; right: 12px; background: #fff; border: none; font-size: 1.7em; color: #333; cursor: pointer; line-height: 1;
+    }
     @media (max-width:600px) {
       #app {padding:8px;}
       table, th, td {font-size:13px;}
       .list-title {font-size:1em;}
       .top-bar { flex-direction: column; align-items: flex-start;}
       .grok-btn { margin-bottom: 8px; }
+      .img-upload-wrap { flex-direction: column; align-items:flex-start;}
+      .item-img-preview { margin-bottom:4px; }
+      .modal-img {max-width:95vw; max-height:70vh;}
     }
   </style>
 </head>
@@ -72,16 +92,24 @@
       <table id="itemTable">
         <thead>
           <tr>
-            <th style="width:22%;">Item</th>
-            <th style="width:33%;">web</th>
-            <th style="width:12%;">price</th>
+            <th style="width:16%;">Item</th>
+            <th style="width:12%;">Image</th>
+            <th style="width:26%;">web</th>
+            <th style="width:10%;">price</th>
             <th style="width:23%;">P.S.</th>
-            <th style="width:10%;">Actions</th>
+            <th style="width:13%;">Actions</th>
           </tr>
         </thead>
         <tbody id="itemRows"></tbody>
       </table>
       <button class="add-row-btn" id="addItemBtn">+ Add Item</button>
+    </div>
+    <!-- Modal for big image view -->
+    <div class="modal-bg" id="imgModalBg" onclick="closeImgModal(event)">
+      <div class="modal-img-wrap">
+        <button class="modal-close-btn" onclick="closeImgModal(event)">&times;</button>
+        <img class="modal-img" id="imgModalImg" src="" alt="Big image">
+      </div>
     </div>
   </div>
   <script>
@@ -90,13 +118,15 @@
   const REPO = 'My-list';
   const BRANCH = 'main';
   const FILE = 'lists.json';
+  const IMAGES_FOLDER = 'images'; // image files will be stored in /images
 
   // --- STATE ---
   let ghToken = '';
-  let lists = []; // [{title,items:[{Item,web,price,P.S.}]}]
+  let lists = []; // [{title,items:[{Item,web,price,P.S.,img}]}], img is image filename or URL
   let currentList = 0;
   let fileSha = null;
   let saveTimer = null;
+  let imageUploadProgress = {}; // {itemIdx: string}
 
   // --- UI HANDLERS ---
   function qs(id){return document.getElementById(id);}
@@ -120,11 +150,29 @@
     renderRows();
   }
 
+  function getImageRawUrl(filename) {
+    // https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/images/{filename}
+    if (!filename) return '';
+    if (/^https?:\/\//.test(filename)) return filename; // user-pasted url
+    return `https://raw.githubusercontent.com/${OWNER}/${REPO}/${BRANCH}/${IMAGES_FOLDER}/${encodeURIComponent(filename)}`;
+  }
+
   function renderRows(){
     const items = lists[currentList].items;
-    qs('itemRows').innerHTML = items.map((it,idx)=>`
+    qs('itemRows').innerHTML = items.map((it,idx)=>{
+      let imgUrl = it.img ? getImageRawUrl(it.img) : '';
+      return `
       <tr draggable="true" ondragstart="startDrag(${idx})" ondragover="dragOver(event,${idx})" ondrop="dropDrag(${idx})" ondragend="endDrag()">
         <td><input type="text" value="${escapeHtml(it.Item)}" onchange="editItem(${idx},'Item',this.value)"></td>
+        <td>
+          <div class="img-upload-wrap">
+            ${imgUrl ? `<img class="item-img-preview" src="${escapeHtml(imgUrl)}" alt="img" onclick="openImgModal('${escapeHtml(imgUrl)}')" onerror="this.src='';">` : ''}
+            <input type="file" accept="image/*" style="display:none;" id="itemImgUpload${idx}" onchange="handleImageUpload(event,${idx})">
+            <label class="img-upload-label" for="itemImgUpload${idx}">${it.img ? 'Change Image' : 'Upload Image'}</label>
+            ${it.img ? `<button onclick="clearItemImage(${idx})" title="Remove Image" style="margin-left:4px;">🗑️</button>` : ''}
+            <span class="img-upload-progress" id="imgUploadProgress${idx}">${imageUploadProgress[idx]||''}</span>
+          </div>
+        </td>
         <td><input type="text" value="${escapeHtml(it.web)}" onchange="editItem(${idx},'web',this.value)"></td>
         <td><input type="text" value="${escapeHtml(it.price)}" onchange="editItem(${idx},'price',this.value)"></td>
         <td><input type="text" value="${escapeHtml(it['P.S.'])}" onchange="editItem(${idx},'P.S.',this.value)"></td>
@@ -132,8 +180,24 @@
           <button class="item-del" onclick="deleteItem(${idx})">&times;</button>
           <span class="item-move" title="Drag">&#x2630;</span>
         </td>
-      </tr>`).join('');
+      </tr>`;
+    }).join('');
   }
+
+  // --- IMAGE MODAL VIEW ---
+  window.openImgModal = function(imgUrl) {
+    const modalBg = qs('imgModalBg');
+    const modalImg = qs('imgModalImg');
+    modalImg.src = imgUrl;
+    modalBg.classList.add('active');
+  };
+  window.closeImgModal = function(e) {
+    // Only close if click background or close btn
+    if(!e || e.target === qs('imgModalBg') || e.target.classList.contains('modal-close-btn')){
+      qs('imgModalBg').classList.remove('active');
+      qs('imgModalImg').src = '';
+    }
+  };
 
   // --- LIST LOGIC ---
   window.showList = function(idx){
@@ -166,9 +230,89 @@
     lists[currentList].items.splice(idx,1); renderRows(); queueSave();
   }
   qs('addItemBtn').onclick = function(){
-    lists[currentList].items.push({Item:'',web:'',price:'',"P.S.":''});
+    lists[currentList].items.push({Item:'',web:'',price:'',"P.S.":'',img:''});
     renderRows(); queueSave();
   }
+
+  // --- IMAGE LOGIC ---
+  window.handleImageUpload = async function(e, idx) {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (file.size > 8*1024*1024) {
+      imageUploadProgress[idx] = "Image too large (max 8MB)";
+      renderRows();
+      return;
+    }
+    imageUploadProgress[idx] = "Uploading...";
+    renderRows();
+
+    // Generate a unique filename (itemidx-timestamp-originalname)
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const filename = `${Date.now()}_${idx}_${safeName}`;
+    // Read as base64
+    const reader = new FileReader();
+    reader.onload = async function(evt){
+      let contentBase64 = evt.target.result.split(',')[1];
+      // Upload to GitHub
+      try {
+        const uploadRes = await uploadImageToGitHub(filename, contentBase64, file.type);
+        if (uploadRes.ok) {
+          lists[currentList].items[idx].img = filename;
+          imageUploadProgress[idx] = "Uploaded";
+          renderRows();
+          queueSave();
+        } else {
+          const msg = uploadRes.error || "Upload failed";
+          imageUploadProgress[idx] = msg;
+          renderRows();
+        }
+      } catch(ex) {
+        imageUploadProgress[idx] = "Error uploading";
+        renderRows();
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  async function uploadImageToGitHub(filename, contentBase64, mime) {
+    // Try to get SHA if file exists
+    let imgSha = undefined;
+    try {
+      const getRes = await fetch(`https://api.github.com/repos/${OWNER}/${REPO}/contents/${IMAGES_FOLDER}/${encodeURIComponent(filename)}?ref=${BRANCH}`, {
+        headers: getHeaders()
+      });
+      if (getRes.ok) {
+        const getJson = await getRes.json();
+        imgSha = getJson.sha;
+      }
+    } catch (e) {}
+    // Now upload
+    try {
+      const putRes = await fetch(`https://api.github.com/repos/${OWNER}/${REPO}/contents/${IMAGES_FOLDER}/${encodeURIComponent(filename)}`, {
+        method: "PUT",
+        headers: getHeaders(true),
+        body: JSON.stringify({
+          message: `Upload image ${filename}`,
+          content: contentBase64,
+          branch: BRANCH,
+          sha: imgSha
+        })
+      });
+      if (!putRes.ok) {
+        const errJson = await putRes.json();
+        return {ok:false, error: errJson.message || "Upload failed"};
+      }
+      return {ok:true};
+    } catch (e) {
+      return {ok:false, error: "Upload error"};
+    }
+  }
+
+  window.clearItemImage = function(idx) {
+    lists[currentList].items[idx].img = '';
+    renderRows();
+    queueSave();
+  };
 
   // --- DRAG & DROP ---
   let dragIdx = null;
@@ -220,6 +364,10 @@
       const j = await r.json();
       fileSha = j.sha;
       lists = JSON.parse(base64DecodeUnicode(j.content)); // Unicode safe!
+      // Ensure old lists without img field are compatible
+      for(const l of lists){
+        for(const it of l.items) if(typeof it.img === 'undefined') it.img = '';
+      }
       if(!Array.isArray(lists)) lists=[{title:'Sample List',items:[]}];
       setStatus('Loaded');
     }catch(e){
@@ -325,6 +473,10 @@
   window.dragOver = window.dragOver;
   window.dropDrag = window.dropDrag;
   window.endDrag = window.endDrag;
+  window.handleImageUpload = window.handleImageUpload;
+  window.clearItemImage = window.clearItemImage;
+  window.openImgModal = window.openImgModal;
+  window.closeImgModal = window.closeImgModal;
   </script>
 </body>
 </html>
